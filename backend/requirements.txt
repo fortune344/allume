@@ -1,0 +1,22 @@
+# API
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+pydantic==2.11.3
+pydantic-settings==2.9.1
+
+# Base de données
+supabase==2.15.1
+postgrest==0.19.3
+
+# Scraper
+httpx==0.28.1
+beautifulsoup4==4.13.4
+lxml==5.3.2
+
+# Tests
+pytest==8.3.5
+pytest-asyncio==0.26.0
+httpx==0.28.1
+
+# Utilitaires
+python-dotenv==1.1.0
