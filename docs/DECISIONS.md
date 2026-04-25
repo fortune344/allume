@@ -187,3 +187,198 @@ Pourquoi :
     et une V1 stable à publier
 
 Hébergement de l'APK : GitHub Releases (gratuit, dans le même repo)
+
+---
+
+## DEC-009 — Pivot stratégique : le scraper devient secondaire
+
+Date : 2026-04-25
+
+Constat terrain : ceet.tg ne publie quasi plus de communiqués détaillés sur les
+coupures programmées depuis fin janvier 2026. Tous les communiqués restants sont
+des images JPG (pas du HTML texte). La CEET communique principalement via Facebook
+et les sites de presse togolais qui relaient les annonces.
+
+Décision : le scraper de communiqués officiels reste utile mais cesse d'être le
+cœur de l'app. La détection automatique multi-capteurs sur les téléphones devient
+la source de données principale.
+
+Conséquences :
+  - Le scraper doit être robuste aux silences (pas planter quand il ne trouve rien)
+  - Le scraper doit être modulaire (ajout/retrait de sources sans tout casser)
+  - L'app affiche les coupures communautaires en priorité, les annonces officielles
+    en complément
+  - Argument produit renforcé : Allumé est utile précisément parce que la CEET
+    communique mal
+
+---
+
+## DEC-010 — Architecture multi-sources par adaptateurs
+
+Date : 2026-04-25
+
+Décision : le scraper agrège plusieurs sources avec une architecture par adaptateurs.
+
+Sources prévues, par tier :
+
+  Tier 1 (sources principales) :
+    - Togo Actualité (togoactualite.com)        — RSS WordPress confirmé
+    - République Togolaise (republiquetogolaise.com)
+    - Togo First (togofirst.com)                — bloque le bot, à investiguer
+
+  Tier 2 (sources secondaires) :
+    - Icilome (icilome.com)
+    - Impartial Actu (impartialactu.tg)
+    - New Afrique (newafrique.net)
+
+  Tier 3 (origine officielle, peu utile actuellement) :
+    - ceet.tg                                   — OCR Tesseract pour les rares
+                                                  communiqués utiles qui y reparaissent
+
+Interface commune (`Source` protocol) :
+  - discover_recent() → liste d'URLs candidates
+  - extract(url) → RawArticle standardisé
+
+Filtre de pré-sélection sur le titre (mots-clés "CEET", "coupure", "électricité",
+"délestage", "interruption", "fourniture") avant tout fetch de page complète.
+
+Pourquoi cette architecture :
+  - Ajouter une 7ème source = créer un fichier de 50 lignes
+  - Si une source change son HTML, ça ne casse que cette source-là
+  - Le pipeline central ne connaît pas les détails de chaque source
+
+---
+
+## DEC-011 — Déduplication et gestion des conflits
+
+Date : 2026-04-25
+
+Trois niveaux de déduplication :
+
+  Niveau A (URL) : on ne reprocesse jamais la même URL d'article.
+  Niveau B (event hash) : sha256(date_coupure + heure_début + sorted(zones)).
+                          Si deux sources rapportent les mêmes faits, même hash,
+                          elles sont liées au même outage_event.
+  Niveau C (conflits) : si deux sources rapportent même date+zones mais heures
+                        différentes, on stocke les deux versions et on flag
+                        l'événement avec has_conflicts = true.
+
+Gestion des conflits côté affichage :
+  - On présente la fenêtre la plus prudente (début le plus tôt, fin la plus tard).
+    Si on annonce 9h-15h et que c'est 9h-14h, l'utilisateur est agréablement surpris.
+    L'inverse est inacceptable.
+  - On affiche le nombre de sources qui ont confirmé (ex: "3 sources, 1 divergente").
+  - L'utilisateur peut consulter chaque version source par source si besoin.
+
+Pas de pondération de fiabilité par source au démarrage :
+  - On n'a pas de données pour dire "Togo First est plus fiable qu'Icilome"
+  - On observera les patterns sur 2-3 mois avant d'introduire des poids
+
+---
+
+## DEC-012 — Schéma de base de données révisé (supersède DEC-005)
+
+Date : 2026-04-25
+
+Nouvelles tables (multi-sources) :
+
+  sources
+    id UUID PK
+    name TEXT                 -- 'togoactualite', 'republiquetogo', etc.
+    base_url TEXT
+    tier INT                  -- 1, 2, 3
+    is_active BOOLEAN
+    -- pas de reliability_weight tant qu'on n'a pas de données
+
+  raw_articles
+    id UUID PK
+    source_id UUID FK → sources
+    source_url TEXT UNIQUE    -- URL originale, sert à la dédup niveau A
+    scraped_at TIMESTAMPTZ
+    title TEXT
+    content_text TEXT
+    content_image_urls TEXT[] -- pour les communiqués avec images
+    classification TEXT       -- 'planned_outage' | 'unplanned' | 'admin' | 'unknown'
+    parse_status TEXT         -- 'ok' | 'partial' | 'failed'
+
+  outage_events
+    id UUID PK
+    event_hash TEXT UNIQUE    -- dédup niveau B
+    primary_date DATE
+    best_starts_at TIMESTAMPTZ
+    best_ends_at TIMESTAMPTZ
+    has_conflicts BOOLEAN
+    source_count INT
+    created_at TIMESTAMPTZ
+
+  outage_versions
+    id UUID PK
+    outage_event_id UUID FK → outage_events
+    raw_article_id UUID FK → raw_articles
+    starts_at TIMESTAMPTZ
+    ends_at TIMESTAMPTZ
+    zones JSONB               -- noms bruts extraits, avant mappage
+
+  outage_event_zones          -- table de jonction event ↔ zone
+    outage_event_id UUID FK
+    zone_id UUID FK
+    PRIMARY KEY (outage_event_id, zone_id)
+
+Tables conservées (de DEC-005, mises à jour) :
+  zones                       -- inchangé
+  device_signals              -- inchangé
+  community_outages           -- inchangé
+
+Tables abandonnées :
+  ceet_announcements          -- remplacé par raw_articles (multi-source)
+  planned_outages             -- remplacé par outage_events + outage_versions
+
+---
+
+## DEC-013 — Workflow GitHub Actions unifié
+
+Date : 2026-04-25
+
+Décision : un seul workflow GitHub Actions qui s'auto-orchestre, plutôt que
+plusieurs workflows par tier.
+
+Cron unique : `*/30 * * * *` (toutes les 30 minutes)
+
+Le script Python regarde l'heure courante et décide quoi scraper :
+  - Toujours : Tier 1 (3 sources principales)
+  - Si heure paire : Tier 2 (3 sources secondaires)
+  - Si heure multiple de 4 : Tier 3 (ceet.tg avec OCR)
+  - À 03h UTC une fois par jour : nettoyage (TTL device_signals, agrégats)
+
+Pourquoi pas plusieurs crons :
+  - GitHub Actions cron est peu fiable sur les intervalles courts (5-30 min de
+    retard fréquents)
+  - 1 schedule unique = 1 source de problème, pas 6
+  - Plus simple à monitorer (un seul historique d'exécution)
+
+Quota :
+  ~48 runs/jour × ~90s = ~70 min/jour = ~2100 min/mois
+  Le repo est public → minutes illimitées sur GitHub Actions
+  Si on passait en privé un jour, il faudrait baisser la fréquence.
+
+---
+
+## DEC-014 — LLM fallback différé à plus tard
+
+Date : 2026-04-25
+
+Décision : Phase 1 du scraper en regex-only. Le fallback LLM (Gemini Flash 2.0
+free tier) est différé à une phase ultérieure.
+
+Pourquoi différer :
+  - L'utilisateur préfère ne pas créer de compte Google AI Studio maintenant
+  - Le format des communiqués CEET relayés est suffisamment standard pour qu'un
+    parser regex bien construit couvre 80-90% des cas
+  - Les 10-20% restants seront marqués `parse_status = 'partial'` ou 'failed'
+    et reviendront via le fallback LLM en Phase 2 ou 3
+
+Conséquence architecture :
+  - On laisse une fonction `parse_with_llm(text) -> StructuredAnnouncement`
+    déclarée mais non implémentée pour l'instant
+  - Quand on l'activera, elle s'insérera juste après l'échec du regex sans
+    modifier le pipeline
