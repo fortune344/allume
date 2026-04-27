@@ -6,6 +6,7 @@ import '../../../core/theme/theme.dart';
 import '../../../core/theme/typography.dart';
 import '../../../shared/models/zone_status.dart';
 import '../../../shared/widgets/status_dot.dart';
+import 'local_signals_row.dart';
 
 /// La carte principale de l'écran d'accueil : état du courant chez l'utilisateur.
 /// Grand, immédiat, lisible — ce que la maman cherche en ouvrant l'app.
@@ -113,6 +114,8 @@ class MainStatusCard extends StatelessWidget {
               ],
             ),
           ],
+          const SizedBox(height: AppSpacing.md),
+          const LocalSignalsRow(),
         ],
       ),
     );

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/theme/theme.dart';
-import 'features/home/home_screen.dart';
+import 'features/shell/main_shell.dart';
 
 class AllumeApp extends StatelessWidget {
   const AllumeApp({super.key});
@@ -22,7 +22,7 @@ class AllumeApp extends StatelessWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      home: const HomeScreen(),
+      home: const MainShell(),
     );
   }
 }

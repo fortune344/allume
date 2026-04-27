@@ -33,11 +33,14 @@ class ZoneRow extends StatelessWidget {
           Expanded(
             child: Text(
               zone.zoneName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: AppTextStyles.body.copyWith(
                 color: theme.colorScheme.onSurface,
               ),
             ),
           ),
+          const SizedBox(width: AppSpacing.sm),
           Text(
             StatusDot.labelFor(zone.status),
             style: AppTextStyles.small.copyWith(
@@ -45,15 +48,13 @@ class ZoneRow extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(width: AppSpacing.lg),
-          SizedBox(
-            width: 56,
-            child: Text(
-              since == null ? '—' : AppFormat.relativeDuration(now.difference(since)),
+          if (since != null) ...[
+            const SizedBox(width: AppSpacing.lg),
+            Text(
+              AppFormat.relativeDuration(now.difference(since)),
               style: AppTextStyles.stat.copyWith(color: colors.textMuted),
-              textAlign: TextAlign.right,
             ),
-          ),
+          ],
         ],
       ),
     );
